@@ -1,146 +1,519 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>ESP32 MQTT OTA Uploader</title>
-<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vista &middot; 4G Fleet Manager</title>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <style>
-  * { box-sizing: border-box; font-family: 'Segoe UI', Arial, sans-serif; }
-  body { background:#0d1117; color:#e6edf3; display:flex; justify-content:center; padding:40px 16px; }
-  .card { width:100%; max-width:640px; background:#161b22; border:1px solid #30363d; border-radius:12px; padding:28px; }
-  h1 { font-size:20px; margin:0 0 4px; }
-  .sub { color:#8b949e; font-size:13px; margin-bottom:20px; }
-  #drop { border:2px dashed #388bfd; border-radius:10px; padding:48px 16px; text-align:center; cursor:pointer; transition:.2s; }
-  #drop.hover { background:#13233d; border-color:#58a6ff; }
-  #drop p { margin:6px 0; }
-  #fileInfo { color:#58a6ff; font-size:13px; min-height:18px; margin-top:8px; }
-  .barWrap { background:#30363d; border-radius:6px; height:20px; margin:18px 0 6px; overflow:hidden; }
-  #bar { height:100%; width:0%; background:linear-gradient(90deg,#1f6feb,#388bfd); transition:width .15s; }
-  #pct { font-size:13px; color:#8b949e; }
-  #log { background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:10px; height:200px; overflow-y:auto; font-family:Consolas,monospace; font-size:12px; margin-top:18px; }
-  #log div { padding:1px 0; }
-  .ok { color:#3fb950; } .err { color:#f85149; } .info { color:#8b949e; }
-  button { background:#238636; color:#fff; border:0; border-radius:6px; padding:8px 16px; cursor:pointer; font-size:14px; }
-  button:disabled { background:#30363d; color:#8b949e; cursor:default; }
-  .row { display:flex; gap:10px; align-items:center; margin-top:14px; }
-  #connState { font-size:13px; }
+:root{--bg:#0b1020;--card:#141b2e;--line:#232c46;--txt:#e6ebf5;--dim:#8b96b0;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--acc:#38bdf8}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font:14px/1.45 system-ui,"Segoe UI",Roboto,sans-serif}
+header{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:14px 18px;border-bottom:1px solid var(--line)}
+h1{font-size:17px;font-weight:600}
+.badge{padding:4px 12px;border-radius:999px;font-weight:600;font-size:12px;background:var(--warn);color:#111}
+.badge.ok{background:var(--ok)}.badge.bad{background:var(--bad);color:#fff}
+.layout{display:flex;min-height:calc(100vh - 57px)}
+aside{width:310px;border-right:1px solid var(--line);padding:12px;overflow-y:auto}
+aside h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);margin:4px 4px 10px}
+main{flex:1;padding:16px;overflow-y:auto}
+.filters{display:flex;gap:8px;margin-bottom:10px}
+.filters input,.filters select{background:#0a0f1e;border:1px solid var(--line);border-radius:8px;color:var(--txt);padding:7px 9px;font-size:13px}
+.filters input{flex:1;min-width:90px}
+.dev{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;cursor:pointer;background:var(--card)}
+.dev:hover{border-color:var(--acc)}
+.dev.sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}
+.dev .name{font-weight:700;font-size:13px}
+.dev .mac{font-family:ui-monospace,monospace;font-size:11px;color:var(--dim)}
+.dev .sub{color:var(--dim);font-size:12px;margin-top:3px;display:flex;justify-content:space-between;gap:8px}
+.dev.off{opacity:.45}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
+.dot.on{background:var(--ok)}.dot.off{background:var(--dim)}
+@keyframes flash{0%{background:#1e3a5f}100%{background:var(--card)}}
+.dev.new{animation:flash 1.5s}
+.hint{color:var(--dim);text-align:center;margin-top:60px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin-bottom:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+.card h3{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);margin-bottom:8px}
+.big{font-size:26px;font-weight:700}
+.small{font-size:12px;color:var(--dim)}
+.kv{display:flex;justify-content:space-between;gap:8px;padding:3px 0;font-size:13px}
+.kv span{color:var(--dim)}
+.bars{display:flex;align-items:flex-end;gap:4px;height:26px}
+.bars i{width:10px;background:var(--line);border-radius:2px}
+.bars i.on{background:var(--ok)}
+.bars i:nth-child(1){height:20%}.bars i:nth-child(2){height:40%}.bars i:nth-child(3){height:60%}.bars i:nth-child(4){height:80%}.bars i:nth-child(5){height:100%}
+canvas.chart{width:100%;height:56px;background:#0a0f1e;border:1px solid var(--line);border-radius:8px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.panel h3{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);margin-bottom:10px}
+button{background:var(--acc);border:0;border-radius:8px;padding:8px 14px;font-weight:600;cursor:pointer;color:#04121f}
+button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+button.danger{background:var(--bad);color:#fff}
+button:disabled{opacity:.4;cursor:not-allowed}
+input#period{background:#0a0f1e;border:1px solid var(--line);border-radius:8px;color:var(--txt);padding:8px 10px;font:13px ui-monospace,monospace;width:110px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:26px;text-align:center;color:var(--dim);cursor:pointer;transition:.15s}
+.drop.over{border-color:var(--acc);color:var(--acc);background:#0d1a2e}
+.meter{height:10px;background:var(--line);border-radius:99px;overflow:hidden;margin:8px 0}
+.meter div{height:100%;background:var(--ok);width:0%;transition:width .15s}
+#otalog{height:110px;overflow-y:auto;background:#0a0f1e;border:1px solid var(--line);border-radius:8px;padding:8px;font:12px/1.5 ui-monospace,monospace;color:var(--dim);white-space:pre-wrap}
+.ok-t{color:var(--ok)}.bad-t{color:var(--bad)}.warn-t{color:var(--warn)}
+@media(max-width:800px){.layout{flex-direction:column}aside{width:100%;border-right:0;border-bottom:1px solid var(--line)}}
 </style>
-<base target="_blank">
 </head>
 <body>
-<div class="card">
-  <h1>ESP32 OTA over MQTT</h1>
-  <div class="sub">Drop a compiled firmware <b>.bin</b> file below. It is published to <code>esp32/ota/#</code> over TLS WebSocket MQTT — no HTTP involved. The ESP32 flashes it and ACKs each chunk.</div>
+<header>
+  <h1>Vista &middot; 4G Fleet Manager</h1>
+  <div id="mqbadge" class="badge">connecting&hellip;</div>
+  <div style="flex:1"></div>
+  <small style="color:var(--dim)" id="brokerlbl"></small>
+</header>
+<div class="layout">
+  <aside>
+    <h2>Devices (<span id="devcount">0</span>)</h2>
+    <div class="filters">
+      <input id="search" placeholder="Search name / MAC" oninput="renderList()">
+      <select id="gfilter" onchange="renderList()"><option value="">All groups</option></select>
+      <select id="sort" onchange="renderList()">
+        <option value="name">Name</option>
+        <option value="group">Group</option>
+        <option value="signal">Signal</option>
+        <option value="seen">Last seen</option>
+      </select>
+    </div>
+    <div id="devlist"><div class="hint">Waiting for devices&hellip;</div></div>
+  </aside>
+  <main id="main">
+    <div class="hint" id="nohl">&larr; Select a device to view it</div>
+    <div id="detail" style="display:none">
+      <div class="cards">
+        <div class="card"><h3>Signal</h3>
+          <div class="row">
+            <div class="bars"><i></i><i></i><i></i><i></i><i></i></div>
+            <div class="big" id="d_pct">-</div>
+          </div>
+          <div class="kv"><span>CSQ</span><b id="d_csq">-</b></div>
+          <div class="kv"><span>RSSI</span><b id="d_dbm">-</b></div>
+        </div>
+        <div class="card"><h3>Free RAM</h3>
+          <div class="big" id="d_heap">-</div>
+          <div class="kv"><span>Percent free</span><b id="d_hp">-</b></div>
+        </div>
+        <div class="card"><h3>Device</h3>
+          <div class="kv"><span>Name</span><b id="d_name">-</b></div>
+          <div class="kv"><span>Group</span><b id="d_group">-</b></div>
+          <div class="kv"><span>Carrier</span><b id="d_op">-</b></div>
+          <div class="kv"><span>IP</span><b id="d_ip">-</b></div>
+          <div class="kv"><span>Firmware</span><b id="d_fw">-</b></div>
+          <div class="kv"><span>Uptime</span><b id="d_up">-</b></div>
+        </div>
+        <div class="card"><h3>Health</h3>
+          <div class="kv"><span>Status</span><b id="d_online">-</b></div>
+          <div class="kv"><span>Boot count</span><b id="d_bt">-</b></div>
+          <div class="kv"><span>Reset reason</span><b id="d_rr">-</b></div>
+          <div class="kv"><span>Unix time</span><b id="d_t">-</b></div>
+          <div class="kv"><span>Local</span><b id="d_tloc">-</b></div>
+          <div class="kv"><span>Last seen</span><b id="d_seen">-</b></div>
+        </div>
+      </div>
 
-  <div id="drop">
-    <p><b>Drag &amp; drop your .bin here</b></p>
-    <p class="info">or click to browse</p>
-    <input type="file" id="picker" accept=".bin" hidden>
-    <div id="fileInfo"></div>
-  </div>
+      <div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(340px,1fr))">
+        <div class="card"><h3>Signal % history</h3><canvas class="chart" id="ch_sig"></canvas></div>
+        <div class="card"><h3>Free heap history (kB)</h3><canvas class="chart" id="ch_heap"></canvas></div>
+      </div>
 
-  <div class="row">
-    <button id="btn" disabled>Flash firmware</button>
-    <span id="connState" class="info">connecting…</span>
-  </div>
+      <div class="panel">
+        <h3>Commands &mdash; <span id="c_mac"></span></h3>
+        <div class="row">
+          <label class="small">Telemetry period (s)</label>
+          <input id="period" type="number" min="5" max="3600" value="10">
+          <button onclick="setPeriod()">Set period</button>
+          <button class="ghost" onclick="pubCmd('status');flashCmd('status requested')">Request status now</button>
+          <button class="danger" onclick="rebootDev()">Reboot device</button>
+          <span class="small" id="cmdmsg"></span>
+        </div>
+        <div class="small" style="margin-top:8px">Tip: device name &amp; group are set on the device's local dashboard (http://192.168.4.1 when connected to its AP).</div>
+      </div>
 
-  <div class="barWrap"><div id="bar"></div></div>
-  <div id="pct">idle</div>
-  <div id="log"></div>
+      <div class="panel">
+        <h3>Remote OTA firmware update</h3>
+        <div class="drop" id="drop">Drop <b>firmware.bin</b> here or click to browse
+          <div class="small" id="fileinfo"></div>
+        </div>
+        <input type="file" id="filepick" style="display:none">
+        <div class="row" style="margin-top:10px">
+          <button id="otabtn" onclick="otaBegin()" disabled>Start OTA upload</button>
+          <button class="ghost" id="otacancel" onclick="otaCancel()" disabled>Cancel</button>
+        </div>
+        <div class="meter" style="margin-top:12px"><div id="otabar"></div></div>
+        <div class="kv"><span id="otastat">idle</span><b id="otaspeed"></b></div>
+        <div id="otalog" style="margin-top:8px"></div>
+      </div>
+    </div>
+  </main>
 </div>
 
 <script>
-const BROKER   = 'wss://ab5ba80063414359a2fa906782a6e35f.s1.eu.hivemq.cloud:8884/mqtt';
-const USER     = 'kasun';
-const PASS     = 'kasua1U23';
-const CHUNK    = 2048;
-const TOPIC    = { start:'esp32/ota/start', data:'esp32/ota/data', end:'esp32/ota/end', ack:'esp32/ota/ack' };
+// ===================== CONFIG =====================
+const BROKER = "e27c3c40cb3e4036a2f1181e6b0b0dfc.s1.eu.hivemq.cloud";
+const MQTT_USER = "kasun";
+const MQTT_PASS = "kasun@123";
+const CHUNK = 2048;                 // MUST match OTA_RAW_CHUNK in the firmware
+// ==================================================
 
 const $ = id => document.getElementById(id);
-const log = (m, c='info') => { const d=document.createElement('div'); d.className=c; d.textContent=m; $('log').appendChild(d); $('log').scrollTop = 1e9; };
+$("brokerlbl").textContent = BROKER;
 
-const client = mqtt.connect(BROKER, { username:USER, password:PASS, clientId:'web-ota-'+Math.random().toString(16).slice(2,8) });
-client.on('connect', () => { $('connState').textContent='connected'; $('connState').className='ok'; client.subscribe(TOPIC.ack); log('Connected to HiveMQ Cloud','ok'); });
-client.on('close',   () => { $('connState').textContent='disconnected'; $('connState').className='err'; });
-client.on('error', e => log('MQTT error: '+e, 'err'));
+const devices = new Map();   // mac -> {data, meta, histSig, histHeap, lastMsg, lastT, msgs}
+let selected = null;
 
-let acked = 0, sent = 0, total = 0, busy = false;
-const ackWaiters = new Map();
-
-client.on('message', (t, p) => {
-  if (t !== TOPIC.ack) return;
-  const m = p.toString();
-  if (m.startsWith('ACK ')) {
-    const i = +m.slice(4);
-    if (ackWaiters.has(i)) { ackWaiters.get(i)(); ackWaiters.delete(i); }
-    acked++; progress();
-  } else if (m === 'READY' || m === 'ONLINE') log('ESP32: '+m, 'ok');
-  else if (m === 'DONE OK') { log('ESP32: update SUCCESS — device is rebooting ✔', 'ok'); busy=false; $('btn').disabled=false; }
-  else if (m === 'DONE FAIL') { log('ESP32: update FAILED', 'err'); busy=false; $('btn').disabled=false; }
-  else log('ESP32: '+m, m.startsWith('ERROR')?'err':'info');
+// ---------------- MQTT ----------------
+const client = mqtt.connect("wss://" + BROKER + ":8884/mqtt", {
+  username: MQTT_USER,
+  password: MQTT_PASS,
+  clientId: "fleet-" + Math.random().toString(16).slice(2, 10),
+  clean: true,
+  keepalive: 30,
+  reconnectPeriod: 3000
+});
+function mqBadge(t, cls) { const b = $("mqbadge"); b.textContent = t; b.className = "badge " + cls; }
+client.on("connect", () => { mqBadge("broker connected", "ok"); client.subscribe("devices/#", { qos: 0 }); });
+client.on("reconnect", () => mqBadge("reconnecting...", ""));
+client.on("offline", () => mqBadge("offline", "bad"));
+client.on("error", e => { mqBadge("error", "bad"); console.warn(e); });
+client.on("message", (topic, payload) => {
+  const parts = topic.split("/");
+  if (parts.length < 2 || parts[0] !== "devices") return;
+  const mac = parts[1];
+  const text = payload.toString();
+  if (parts.length === 2) onTelemetry(mac, text);
+  else if (parts[2] === "state" && parts.length === 3) onState(mac, text);
+  else if (parts[2] === "ota" && parts[3] === "ack") otaOnAck(mac, text.trim());
 });
 
-function progress() {
-  if (!total) return;
-  const pc = Math.round(acked/total*100);
-  $('bar').style.width = pc + '%';
-  $('pct').textContent = `flashed ${pc}%  (${acked}/${total} chunks · sent ${sent})`;
+// ---------------- payload parsing (JSON preferred, legacy k=v tolerated) ----------------
+function parseKV(str) {
+  const o = {};
+  for (const kv of str.split(";")) {
+    const i = kv.indexOf("=");
+    if (i > 0) o[kv.slice(0, i)] = kv.slice(i + 1);
+  }
+  return o;
+}
+function parsePayload(text) {
+  text = text.trim();
+  if (text.startsWith("{")) { try { return JSON.parse(text); } catch (e) {} }
+  return parseKV(text);
+}
+function num(v) { const n = Number(v); return isNaN(n) ? null : n; }
+
+function getDev(mac) {
+  let dev = devices.get(mac);
+  if (!dev) dev = { mac, meta: {}, data: null, histSig: [], histHeap: [], lastMsg: 0, lastT: 0, msgs: 0 };
+  return dev;
 }
 
-function b64(u8) {
-  let s = '';
-  for (let i=0; i<u8.length; i+=0x8000)
-    s += String.fromCharCode.apply(null, u8.subarray(i, i+0x8000));
+// ---------------- telemetry (devices/<mac>) ----------------
+function onTelemetry(mac, text) {
+  const d = parsePayload(text);
+  let dev = getDev(mac);
+  const isNew = !devices.has(mac);
+  const now = Date.now();
+  const t = num(d.t) || 0;
+
+  // Out-of-order / replayed buffered frame: count liveness but don't
+  // overwrite the live view or append to charts.
+  if (t && dev.lastT && t <= dev.lastT) {
+    dev.lastMsg = now;
+    devices.set(mac, dev);
+    renderList();
+    return;
+  }
+  if (t) dev.lastT = t;
+
+  dev.data = d;
+  dev.lastMsg = now;
+  dev.msgs++;
+  if (d.pct != null) dev.histSig.push(num(d.pct));
+  if (d.h != null) dev.histHeap.push(num(d.h) / 1024);
+  if (dev.histSig.length > 90) dev.histSig.shift();
+  if (dev.histHeap.length > 90) dev.histHeap.shift();
+  devices.set(mac, dev);
+  renderList(isNew ? mac : null);
+  if (selected === mac) renderDetail();
+}
+
+// ---------------- state / metadata (devices/<mac>/state, retained) ----------------
+function onState(mac, text) {
+  const m = parsePayload(text);
+  let dev = getDev(mac);
+  const isNew = !devices.has(mac);
+  dev.meta = m;
+  if (num(m.online) === 1) dev.lastMsg = Date.now();
+  devices.set(mac, dev);
+  renderList(isNew ? mac : null);
+  if (selected === mac) renderDetail();
+}
+
+function isOnline(dev) {
+  return num(dev.meta.online) === 1 && (Date.now() - dev.lastMsg) < 45000;
+}
+function devName(dev) { return dev.meta.n || dev.mac; }
+
+// ---------------- rendering ----------------
+function ago(ms) {
+  if (!ms) return "never";
+  const s = Math.max(0, ((Date.now() - ms) / 1000) | 0);
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return ((s / 60) | 0) + "m ago";
+  return ((s / 3600) | 0) + "h ago";
+}
+function fmtUp(s) {
+  s |= 0; const d = (s / 86400) | 0; s %= 86400;
+  const p = n => String(n).padStart(2, "0");
+  return (d ? d + "d " : "") + p((s / 3600) | 0) + ":" + p(((s % 3600) / 60) | 0) + ":" + p(s % 60);
+}
+
+function refreshGroupFilter() {
+  const sel = $("gfilter");
+  const cur = sel.value;
+  const groups = new Set();
+  for (const dev of devices.values()) if (dev.meta.g) groups.add(dev.meta.g);
+  sel.innerHTML = '<option value="">All groups</option>' +
+    [...groups].sort().map(g => `<option ${g === cur ? "selected" : ""}>${g}</option>`).join("");
+}
+
+function renderList(newMac) {
+  refreshGroupFilter();
+  const q = $("search").value.trim().toLowerCase();
+  const gf = $("gfilter").value;
+  const sortBy = $("sort").value;
+
+  let list = [...devices.values()];
+  if (q) list = list.filter(d => devName(d).toLowerCase().includes(q) || d.mac.toLowerCase().includes(q));
+  if (gf) list = list.filter(d => d.meta.g === gf);
+  list.sort((a, b) => {
+    if (sortBy === "group") return (a.meta.g || "").localeCompare(b.meta.g || "") || devName(a).localeCompare(devName(b));
+    if (sortBy === "signal") return (num(b.data?.pct) ?? -1) - (num(a.data?.pct) ?? -1);
+    if (sortBy === "seen") return b.lastMsg - a.lastMsg;
+    return devName(a).localeCompare(devName(b));
+  });
+
+  $("devcount").textContent = devices.size;
+  const el = $("devlist");
+  el.innerHTML = list.length ? "" : '<div class="hint">No devices match.</div>';
+  for (const dev of list) {
+    const d = dev.data || {};
+    const online = isOnline(dev);
+    const sig = d.pct != null ? d.pct + "%" : "-";
+    const div = document.createElement("div");
+    div.className = "dev" + (online ? "" : " off") + (selected === dev.mac ? " sel" : "") + (newMac === dev.mac ? " new" : "");
+    div.innerHTML = `<div class="name"><span class="dot ${online ? "on" : "off"}"></span>${devName(dev)}</div>
+      <div class="mac">${dev.mac}</div>
+      <div class="sub"><span>${dev.meta.g || "no group"} &middot; ${dev.meta.op || d.op || "?"} &middot; ${sig} &middot; ${dev.meta.fw || d.fw || "?"}</span><span>${ago(dev.lastMsg)}</span></div>`;
+    div.onclick = () => { selected = dev.mac; renderList(); renderDetail(); };
+    el.appendChild(div);
+  }
+}
+setInterval(() => {
+  renderList();
+  if (selected && devices.has(selected)) {
+    $("d_seen").textContent = ago(devices.get(selected).lastMsg);
+    $("d_online").textContent = isOnline(devices.get(selected)) ? "online" : "offline / stale";
+  }
+}, 3000);
+
+const bars = [...document.querySelectorAll(".bars i")];
+function renderDetail() {
+  const dev = devices.get(selected);
+  if (!dev) return;
+  $("nohl").style.display = "none";
+  $("detail").style.display = "";
+  const d = dev.data || {};
+  const m = dev.meta || {};
+  $("c_mac").textContent = dev.mac;
+  $("d_pct").textContent = d.pct != null ? d.pct + "%" : "-";
+  $("d_csq").textContent = d.csq != null ? d.csq : "-";
+  $("d_dbm").textContent = d.dbm != null ? d.dbm + " dBm" : "-";
+  const lit = d.pct == null ? 0 : Math.max(1, Math.round(num(d.pct) / 20));
+  bars.forEach((b, i) => b.className = i < lit ? "on" : "");
+  $("d_heap").textContent = d.h != null ? (num(d.h) / 1024).toFixed(1) + " kB" : "-";
+  $("d_hp").textContent = d.hp != null ? d.hp + "%" : "-";
+  $("d_name").textContent = m.n || "(unset)";
+  $("d_group").textContent = m.g || "(unset)";
+  $("d_op").textContent = m.op || d.op || "-";
+  $("d_ip").textContent = m.ip || d.ip || "-";
+  $("d_fw").textContent = m.fw || d.fw || "-";
+  $("d_up").textContent = d.up != null ? fmtUp(num(d.up)) : "-";
+  $("d_online").textContent = isOnline(dev) ? "online" : "offline / stale";
+  $("d_bt").textContent = d.bt != null ? d.bt : "-";
+  $("d_rr").textContent = d.rr != null ? d.rr : "-";
+  const t = num(d.t);
+  $("d_t").textContent = t ? t : "-";
+  $("d_tloc").textContent = t ? new Date(t * 1000).toLocaleString() : "-";
+  $("d_seen").textContent = ago(dev.lastMsg);
+  drawChart($("ch_sig"), dev.histSig, 0, 100, "#22c55e");
+  drawChart($("ch_heap"), dev.histHeap, null, null, "#38bdf8");
+}
+
+function drawChart(cv, data, ymin, ymax, color) {
+  const ctx = cv.getContext("2d");
+  const w = cv.width = cv.clientWidth * 2, h = cv.height = cv.clientHeight * 2;
+  ctx.clearRect(0, 0, w, h);
+  if (data.length < 2) return;
+  let lo = ymin != null ? ymin : Math.min(...data), hi = ymax != null ? ymax : Math.max(...data);
+  if (hi - lo < 1) hi = lo + 1;
+  ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
+  data.forEach((v, i) => {
+    const x = i / (data.length - 1) * (w - 4) + 2;
+    const y = h - 4 - (v - lo) / (hi - lo) * (h - 8);
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  });
+  ctx.stroke();
+}
+
+// ---------------- commands ----------------
+function pubCmd(payload) {
+  if (!selected) return;
+  client.publish(`devices/${selected}/cmd`, payload, { qos: 1, retain: false });
+}
+function flashCmd(msg) { $("cmdmsg").textContent = msg; setTimeout(() => $("cmdmsg").textContent = "", 4000); }
+function setPeriod() {
+  const v = parseInt($("period").value, 10);
+  if (!(v >= 5 && v <= 3600)) { flashCmd("period must be 5..3600 s"); return; }
+  pubCmd("period " + v);
+  flashCmd("sent - watch the telemetry cadence change");
+}
+function rebootDev() {
+  if (!selected || !confirm("Reboot " + selected + "?")) return;
+  pubCmd("reboot");
+  flashCmd("reboot command sent");
+}
+
+// ---------------- OTA ----------------
+const ota = { active: false, mac: null, buf: null, size: 0, name: "", total: 0, seq: 0, retry: 0, timer: null, t0: 0, sent: 0 };
+let otaFile = null;
+
+const drop = $("drop"), pick = $("filepick");
+drop.onclick = () => pick.click();
+pick.onchange = () => { if (pick.files[0]) gotFile(pick.files[0]); };
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) gotFile(e.dataTransfer.files[0]); };
+
+function gotFile(f) {
+  otaFile = f;
+  $("fileinfo").textContent = `${f.name} - ${(f.size / 1024).toFixed(1)} kB (${f.size} bytes)`;
+  $("otabtn").disabled = false;
+  otaLog(`file selected: ${f.name} (${f.size} bytes)`);
+}
+function otaLog(msg, cls) {
+  const el = $("otalog");
+  const line = document.createElement("div");
+  if (cls) line.className = cls;
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+function otaStatus(s) { $("otastat").textContent = s; }
+function otaProgress() {
+  const pct = ota.total ? (ota.seq / ota.total * 100) : 0;
+  $("otabar").style.width = pct.toFixed(1) + "%";
+  const elapsed = (Date.now() - ota.t0) / 1000;
+  const rate = elapsed > 0 ? ota.sent / elapsed : 0;
+  const eta = rate > 0 ? Math.round((ota.size - ota.sent) / rate) : 0;
+  $("otaspeed").textContent = `${ota.seq}/${ota.total} chunks - ${(rate / 1024).toFixed(1)} kB/s - ETA ${eta}s`;
+  otaStatus(`uploading ${pct.toFixed(1)}%`);
+}
+function otaArm(ms, fn) { clearTimeout(ota.timer); ota.timer = setTimeout(fn, ms); }
+
+function bytesToB64(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x4000)
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x4000));
   return btoa(s);
 }
 
-function waitAck(i, ms=15000) {
-  return new Promise(res => {
-    const to = setTimeout(() => { ackWaiters.delete(i); res(false); }, ms);
-    ackWaiters.set(i, () => { clearTimeout(to); res(true); });
+async function otaBegin() {
+  if (!selected || !otaFile || ota.active) return;
+  ota.buf = await otaFile.arrayBuffer();
+  ota.active = true; ota.mac = selected;
+  ota.size = ota.buf.byteLength; ota.name = otaFile.name;
+  ota.total = Math.ceil(ota.size / CHUNK);
+  ota.seq = 0; ota.retry = 0; ota.sent = 0; ota.t0 = Date.now();
+  $("otabtn").disabled = true; $("otacancel").disabled = false;
+  $("otabar").style.width = "0%";
+  otaLog(`starting OTA to ${ota.mac}: ${ota.size} bytes in ${ota.total} chunks`, "warn-t");
+  otaStatus("waiting for device READY...");
+  client.publish(`devices/${ota.mac}/ota/start`, `START ${ota.size} ${ota.name}`, { qos: 0 });
+  otaArm(10000, () => otaFail("no READY from device (is it online?)"));
+}
+
+function sendChunk() {
+  const off = ota.seq * CHUNK;
+  const len = Math.min(CHUNK, ota.size - off);
+  const b64 = bytesToB64(new Uint8Array(ota.buf, off, len));
+  client.publish(`devices/${ota.mac}/ota/data`, ota.seq + " " + b64, { qos: 0 });
+  otaArm(3000, () => {
+    if (++ota.retry > 3) otaFail("ACK timeout for chunk " + ota.seq);
+    else { otaLog(`retry chunk ${ota.seq} (${ota.retry}/3)`, "warn-t"); sendChunk(); }
   });
 }
 
-let file = null;
-const drop = $('drop');
-drop.onclick = () => $('picker').click();
-drop.ondragover = e => { e.preventDefault(); drop.classList.add('hover'); };
-drop.ondragleave = () => drop.classList.remove('hover');
-drop.ondrop = e => { e.preventDefault(); drop.classList.remove('hover'); pick(e.dataTransfer.files[0]); };
-$('picker').onchange = e => pick(e.target.files[0]);
-
-function pick(f) {
-  if (!f) return;
-  file = f;
-  $('fileInfo').textContent = `${f.name}  (${(f.size/1024).toFixed(1)} KB)`;
-  $('btn').disabled = busy;
+function otaOnAck(mac, text) {
+  if (!ota.active || mac !== ota.mac) return;
+  if (text === "READY") {
+    clearTimeout(ota.timer);
+    otaLog("device READY - uploading...", "ok-t");
+    sendChunk();
+    return;
+  }
+  const m = text.match(/^ACK (\d+)/);
+  if (m) {
+    const s = +m[1];
+    if (s !== ota.seq) return;               // stray/duplicate ACK
+    clearTimeout(ota.timer);
+    ota.sent += Math.min(CHUNK, ota.size - ota.seq * CHUNK);
+    ota.seq++; ota.retry = 0;
+    otaProgress();
+    if (ota.seq < ota.total) sendChunk();
+    else {
+      otaStatus("finalizing on device (flash verify)...");
+      otaLog("all chunks ACKed - sending END", "ok-t");
+      client.publish(`devices/${ota.mac}/ota/end`, "END", { qos: 0 });
+      otaArm(15000, () => otaFail("no DONE from device"));
+    }
+    return;
+  }
+  if (text === "DONE OK") {
+    clearTimeout(ota.timer);
+    ota.active = false;
+    $("otabar").style.width = "100%";
+    $("otacancel").disabled = true; $("otabtn").disabled = false;
+    otaStatus("OTA complete - device is rebooting into the new firmware");
+    otaLog("DONE OK - device rebooting. It will reappear with new fw in ~30-60 s.", "ok-t");
+    return;
+  }
+  if (text.startsWith("DONE FAIL") || text.startsWith("ERROR")) {
+    clearTimeout(ota.timer);
+    otaFail("device reported: " + text);
+  }
 }
 
-$('btn').onclick = async () => {
-  if (!file || busy) return;
-  busy = true; $('btn').disabled = true;
-  acked = 0; sent = 0;
-  const buf = new Uint8Array(await file.arrayBuffer());
-  total = Math.ceil(buf.length / CHUNK);
-  log(`Uploading ${file.name}: ${buf.length} bytes in ${total} chunks`, 'ok');
-
-  client.publish(TOPIC.start, `START ${buf.length} ${file.name}`);
-
-  for (let i = 0; i < total; i++) {
-    const payload = `${i} ${b64(buf.subarray(i*CHUNK, (i+1)*CHUNK))}`;
-    let tries = 0, ok = false;
-    while (!ok && tries < 3) {
-      client.publish(TOPIC.data, payload);
-      sent++;
-      ok = await waitAck(i);
-      if (!ok) { tries++; log(`no ACK for chunk ${i}, retry ${tries}`, 'err'); }
-    }
-    if (!ok) { log('Update aborted — device not responding.', 'err'); busy=false; $('btn').disabled=false; return; }
-    progress();
-  }
-  client.publish(TOPIC.end, `END ${total}`);
-  log('All chunks sent, waiting for DONE…');
-};
+function otaFail(why) {
+  ota.active = false;
+  $("otacancel").disabled = true; $("otabtn").disabled = false;
+  otaStatus("OTA failed");
+  otaLog("OTA failed: " + why + " (device keeps running current firmware)", "bad-t");
+}
+function otaCancel() {
+  if (!ota.active) return;
+  clearTimeout(ota.timer);
+  ota.active = false;
+  $("otacancel").disabled = true; $("otabtn").disabled = false;
+  otaStatus("cancelled");
+  otaLog("cancelled by user - device auto-aborts after its chunk timeout", "warn-t");
+}
 </script>
 </body>
 </html>
