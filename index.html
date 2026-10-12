@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ESP32 MQTT OTA Uploader</title>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<style>
+  * { box-sizing: border-box; font-family: 'Segoe UI', Arial, sans-serif; }
+  body { background:#0d1117; color:#e6edf3; display:flex; justify-content:center; padding:40px 16px; }
+  .card { width:100%; max-width:640px; background:#161b22; border:1px solid #30363d; border-radius:12px; padding:28px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:#8b949e; font-size:13px; margin-bottom:20px; }
+  #drop { border:2px dashed #388bfd; border-radius:10px; padding:48px 16px; text-align:center; cursor:pointer; transition:.2s; }
+  #drop.hover { background:#13233d; border-color:#58a6ff; }
+  #drop p { margin:6px 0; }
+  #fileInfo { color:#58a6ff; font-size:13px; min-height:18px; margin-top:8px; }
+  .barWrap { background:#30363d; border-radius:6px; height:20px; margin:18px 0 6px; overflow:hidden; }
+  #bar { height:100%; width:0%; background:linear-gradient(90deg,#1f6feb,#388bfd); transition:width .15s; }
+  #pct { font-size:13px; color:#8b949e; }
+  #log { background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:10px; height:200px; overflow-y:auto; font-family:Consolas,monospace; font-size:12px; margin-top:18px; }
+  #log div { padding:1px 0; }
+  .ok { color:#3fb950; } .err { color:#f85149; } .info { color:#8b949e; }
+  button { background:#238636; color:#fff; border:0; border-radius:6px; padding:8px 16px; cursor:pointer; font-size:14px; }
+  button:disabled { background:#30363d; color:#8b949e; cursor:default; }
+  .row { display:flex; gap:10px; align-items:center; margin-top:14px; }
+  #connState { font-size:13px; }
+</style>
+<base target="_blank">
+</head>
+<body>
+<div class="card">
+  <h1>ESP32 OTA over MQTT</h1>
+  <div class="sub">Drop a compiled firmware <b>.bin</b> file below. It is published to <code>esp32/ota/#</code> over TLS WebSocket MQTT — no HTTP involved. The ESP32 flashes it and ACKs each chunk.</div>
+
+  <div id="drop">
+    <p><b>Drag &amp; drop your .bin here</b></p>
+    <p class="info">or click to browse</p>
+    <input type="file" id="picker" accept=".bin" hidden>
+    <div id="fileInfo"></div>
+  </div>
+
+  <div class="row">
+    <button id="btn" disabled>Flash firmware</button>
+    <span id="connState" class="info">connecting…</span>
+  </div>
+
+  <div class="barWrap"><div id="bar"></div></div>
+  <div id="pct">idle</div>
+  <div id="log"></div>
+</div>
+
+<script>
+const BROKER   = 'wss://ab5ba80063414359a2fa906782a6e35f.s1.eu.hivemq.cloud:8884/mqtt';
+const USER     = 'kasun';
+const PASS     = 'kasua1U23';
+const CHUNK    = 2048;
+const TOPIC    = { start:'esp32/ota/start', data:'esp32/ota/data', end:'esp32/ota/end', ack:'esp32/ota/ack' };
+
+const $ = id => document.getElementById(id);
+const log = (m, c='info') => { const d=document.createElement('div'); d.className=c; d.textContent=m; $('log').appendChild(d); $('log').scrollTop = 1e9; };
+
+const client = mqtt.connect(BROKER, { username:USER, password:PASS, clientId:'web-ota-'+Math.random().toString(16).slice(2,8) });
+client.on('connect', () => { $('connState').textContent='connected'; $('connState').className='ok'; client.subscribe(TOPIC.ack); log('Connected to HiveMQ Cloud','ok'); });
+client.on('close',   () => { $('connState').textContent='disconnected'; $('connState').className='err'; });
+client.on('error', e => log('MQTT error: '+e, 'err'));
+
+let acked = 0, sent = 0, total = 0, busy = false;
+const ackWaiters = new Map();
+
+client.on('message', (t, p) => {
+  if (t !== TOPIC.ack) return;
+  const m = p.toString();
+  if (m.startsWith('ACK ')) {
+    const i = +m.slice(4);
+    if (ackWaiters.has(i)) { ackWaiters.get(i)(); ackWaiters.delete(i); }
+    acked++; progress();
+  } else if (m === 'READY' || m === 'ONLINE') log('ESP32: '+m, 'ok');
+  else if (m === 'DONE OK') { log('ESP32: update SUCCESS — device is rebooting ✔', 'ok'); busy=false; $('btn').disabled=false; }
+  else if (m === 'DONE FAIL') { log('ESP32: update FAILED', 'err'); busy=false; $('btn').disabled=false; }
+  else log('ESP32: '+m, m.startsWith('ERROR')?'err':'info');
+});
+
+function progress() {
+  if (!total) return;
+  const pc = Math.round(acked/total*100);
+  $('bar').style.width = pc + '%';
+  $('pct').textContent = `flashed ${pc}%  (${acked}/${total} chunks · sent ${sent})`;
+}
+
+function b64(u8) {
+  let s = '';
+  for (let i=0; i<u8.length; i+=0x8000)
+    s += String.fromCharCode.apply(null, u8.subarray(i, i+0x8000));
+  return btoa(s);
+}
+
+function waitAck(i, ms=15000) {
+  return new Promise(res => {
+    const to = setTimeout(() => { ackWaiters.delete(i); res(false); }, ms);
+    ackWaiters.set(i, () => { clearTimeout(to); res(true); });
+  });
+}
+
+let file = null;
+const drop = $('drop');
+drop.onclick = () => $('picker').click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('hover'); };
+drop.ondragleave = () => drop.classList.remove('hover');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('hover'); pick(e.dataTransfer.files[0]); };
+$('picker').onchange = e => pick(e.target.files[0]);
+
+function pick(f) {
+  if (!f) return;
+  file = f;
+  $('fileInfo').textContent = `${f.name}  (${(f.size/1024).toFixed(1)} KB)`;
+  $('btn').disabled = busy;
+}
+
+$('btn').onclick = async () => {
+  if (!file || busy) return;
+  busy = true; $('btn').disabled = true;
+  acked = 0; sent = 0;
+  const buf = new Uint8Array(await file.arrayBuffer());
+  total = Math.ceil(buf.length / CHUNK);
+  log(`Uploading ${file.name}: ${buf.length} bytes in ${total} chunks`, 'ok');
+
+  client.publish(TOPIC.start, `START ${buf.length} ${file.name}`);
+
+  for (let i = 0; i < total; i++) {
+    const payload = `${i} ${b64(buf.subarray(i*CHUNK, (i+1)*CHUNK))}`;
+    let tries = 0, ok = false;
+    while (!ok && tries < 3) {
+      client.publish(TOPIC.data, payload);
+      sent++;
+      ok = await waitAck(i);
+      if (!ok) { tries++; log(`no ACK for chunk ${i}, retry ${tries}`, 'err'); }
+    }
+    if (!ok) { log('Update aborted — device not responding.', 'err'); busy=false; $('btn').disabled=false; return; }
+    progress();
+  }
+  client.publish(TOPIC.end, `END ${total}`);
+  log('All chunks sent, waiting for DONE…');
+};
+</script>
+</body>
+</html>
